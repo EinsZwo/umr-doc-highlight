@@ -16,7 +16,7 @@
   "files": [
   "out",
   "scripts",
-  "src",
+  "src/*",
   "package.json"
 ],
   "main": "./out/extension.js",  
@@ -33,5 +33,6 @@
     "vscode": "^1.60.0",
     "@types/node": "^16.9.1",
     "@types/vscode": "^1.60.0"
-  }
+  },
+  "repository": "https://github.com/EinsZwo/umr-doc-highlight/"
 }
