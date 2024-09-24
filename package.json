@@ -11,7 +11,7 @@
     "Other"
   ],
   "activationEvents": [
-    "*"  
+    "onLanguage:plaintext"  
   ],
   "files": [
   "out",
