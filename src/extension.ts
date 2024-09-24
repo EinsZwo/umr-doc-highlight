@@ -1,8 +1,94 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 
-let wordTooltipCache: { [word: string]: string } = {};  // Cache to store tooltips for words
-let lastDocumentText = '';  // Track the document content to detect changes
+let wordTooltipCache: { [word: string]: string } = {}; 
+let lastDocumentText = '';  // for caching results
+
+const venvPath = path.join(__dirname, 'umr_doc_helper_venv'); 
+const requirementsFile = path.join(__dirname, '..', 'src', 'requirements.txt');  
+
+
+function findPythonExecutable(): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const pythonCandidates = ['python', 'python3', 'py'];  // Common Python executables
+        const whichCmd = process.platform === 'win32' ? 'where' : 'which';  // Command to check for executables
+
+        let foundPython = false;
+
+        for (const candidate of pythonCandidates) {
+            try {
+                cp.execSync(`${whichCmd} ${candidate}`);
+                console.log(`Using Python executable: ${candidate}`);
+                resolve(candidate);  // Return the first working Python executable
+                foundPython = true;
+                break;
+            } catch (err) {
+                // If the candidate isn't found, continue to the next one
+            }
+        }
+
+        if (!foundPython) {
+            reject(new Error('No Python executable found! Please ensure Python is installed and added to PATH.'));
+        }
+    });
+}
+
+// Function to check if a virtual environment exists and create it if necessary
+function checkOrCreateVirtualEnv(pythonExec: string): Thenable<void> {
+    return new Promise((resolve, reject) => {
+        if (!fs.existsSync(venvPath)) {
+            console.log('Virtual environment not found. Creating one...');
+            const createVenv = cp.spawn(pythonExec, ['-m', 'venv', venvPath]);
+
+            createVenv.on('error', (err) => {
+                console.error('Error creating virtual environment:', err);
+                reject(err);
+            });
+
+            createVenv.on('close', (code) => {
+                if (code === 0) {
+                    console.log('Virtual environment created successfully.');
+                    installDependencies(pythonExec, resolve, reject);
+                } else {
+                    reject(`Failed to create virtual environment. Exit code: ${code}`);
+                }
+            });
+        } else {
+            console.log('Virtual environment found.');
+            installDependencies(pythonExec, resolve, reject);
+        }
+    });
+}
+
+// Function to install dependencies inside the virtual environment
+function installDependencies(pythonExec: string, resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: any) => void) {
+    if (fs.existsSync(requirementsFile)) {
+        console.log('Installing dependencies...');
+        const venvPython = path.join(venvPath, 'Scripts', pythonExec); // assumes windows I think
+        const pipInstall = cp.spawn(venvPython, ['-m', 'pip', 'install', '-r', requirementsFile]);
+
+        pipInstall.on('error', (err) => {
+            console.error('Error installing dependencies:', err);
+            reject(err);
+        });
+
+        pipInstall.on('close', (code) => {
+            if (code === 0) {
+                console.log('Dependencies installed successfully.');
+                resolve();
+            } else {
+                reject(`Failed to install dependencies. Exit code: ${code}`);
+            }
+        });
+    } else {
+        console.log('No requirements.txt found. Skipping dependency installation.');
+        console.log(requirementsFile)
+        resolve();
+    }
+}
+
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Extension "my-extension" is now active!');
@@ -41,7 +127,6 @@ export function activate(context: vscode.ExtensionContext) {
 
     context.subscriptions.push(disposable);
 
-    // Listen for document changes to update the cache when the document changes
     vscode.workspace.onDidChangeTextDocument(event => {
         const documentText = event.document.getText();
         if (documentText !== lastDocumentText) {
@@ -50,7 +135,6 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
-    // Run the Python script and build the cache when the document is first opened
     if (vscode.window.activeTextEditor) {
         const initialDocumentText = vscode.window.activeTextEditor.document.getText();
         lastDocumentText = initialDocumentText;
@@ -58,70 +142,61 @@ export function activate(context: vscode.ExtensionContext) {
     }
 }
 
-// Function to run the Python script and update the cache with tooltips for all words
+
 function runPythonScriptForTooltips(documentText: string): Thenable<void> {
     return new Promise((resolve, reject) => {
-        const pythonPath = 'python';  // Ensure Python is installed and available
-        const scriptPath = vscode.Uri.file(__dirname + '/../src/process_document.py').fsPath;
+        findPythonExecutable().then((pythonExec) => {
+            checkOrCreateVirtualEnv(pythonExec).then(() => {
+                const venvPython = path.join(venvPath, 'Scripts', 'python');  // Adjust for your OS if necessary
+                const scriptPath = path.join(__dirname, '..', 'src', 'process_document.py');
 
-        // Log the Python script path
-        console.log(`Running Python script at: ${scriptPath}`);
+                console.log(`Running Python script from: ${scriptPath} in virtual environment`);
 
-        try {
-            // Spawn the Python process
-            const pythonProcess = cp.spawn(pythonPath, [scriptPath]);
+                const pythonProcess = cp.spawn(venvPython, [scriptPath]);
 
-            // Ensure the Python process started successfully
-            pythonProcess.on('error', (err) => {
-                console.error('Failed to start Python process:', err);
-                reject(err);  // Reject the promise on error
+                pythonProcess.on('error', (err) => {
+                    console.error('Failed to start Python process:', err);
+                    reject(err);
+                });
+
+                pythonProcess.stdin.write(documentText, (err) => {
+                    if (err) {
+                        console.error('Error writing to Python stdin:', err);
+                        reject(err);
+                    } else {
+                        pythonProcess.stdin.end();
+                    }
+                });
+
+                // Capture stdout from the Python script
+                pythonProcess.stdout.on('data', (data) => {
+                    try {
+                        const result = JSON.parse(data.toString());
+    
+                        console.log('Parsed result from Python:', result);
+                        wordTooltipCache = result;  // Update the cache with the new tooltips
+                        resolve();  // Resolve when the cache is updated
+                    } catch (error) {
+                        console.error('Failed to parse Python output:', error);
+                        resolve();  // Still resolve to avoid blocking the UI
+                    }
+                });
+
+                // Capture stderr for debugging
+                pythonProcess.stderr.on('data', (data) => {
+                    console.error(`Python stderr: ${data.toString()}`);
+                });
+
+                // Log when the process finishes
+                pythonProcess.on('close', (code) => {
+                    if (code === 0) {
+                        console.log('Python script finished successfully.');
+                    } else {
+                        console.error(`Python script finished with code ${code}`);
+                    }
+                });
             });
-
-            // Send the entire document text to the Python script via stdin
-            pythonProcess.stdin.write(documentText, (err) => {
-                if (err) {
-                    console.error('Error writing to Python stdin:', err);
-                    reject(err);  // Reject if there's an error writing
-                } else {
-                    console.log('Document text sent to Python script.');
-                    pythonProcess.stdin.end();  // End stdin after writing
-                }
-            });
-
-            // Capture stdout from the Python script (should contain the cache for tooltips)
-            pythonProcess.stdout.on('data', (data) => {
-                console.log('Received data from Python script.');
-                try {
-                    const result = JSON.parse(data.toString());
-
-                    // for (let word in result) {
-                    //     result[word] = result[word]
-                    //         .replace(/\n/g, '\n\n')
-                    //         .replace(new RegExp(`\\b${word}\\b`, 'g'), `**${word}**`);
-                    // }
-
-                    console.log('Parsed result from Python:', result);
-                    wordTooltipCache = result;  // Update the cache with the new tooltips
-                    resolve();  // Resolve when the cache is updated
-                } catch (error) {
-                    console.error('Failed to parse Python output:', error);
-                    resolve();  // Still resolve to avoid blocking the UI
-                }
-            });
-
-            // Capture stderr for debugging (log any errors from the Python script)
-            pythonProcess.stderr.on('data', (data) => {
-                console.error(`Python stderr: ${data.toString()}`);
-            });
-
-            // Log when the process finishes
-            pythonProcess.on('close', (code) => {
-                console.log(`Python script finished with code ${code}`);
-            });
-        } catch (error) {
-            console.error('Error spawning Python process:', error);
-            reject(error);
-        }
+        }).catch(reject);
     });
 }
 

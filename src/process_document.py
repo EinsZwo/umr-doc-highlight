@@ -4,7 +4,6 @@ import penman
 import json
 
 def extract_graphs(text, subtype="sentence"):
-    # Regular expression to match text between "# sentence level graph:" and the next "#"
     pattern = rf"# {subtype} level graph:(.*?)(?=(#|\n-|\Z))"
 
     matches = re.findall(pattern, text, re.DOTALL)
@@ -12,24 +11,49 @@ def extract_graphs(text, subtype="sentence"):
     return [match[0].strip() for match in matches]
 
 
+def clean_token_labels(text):
+    pattern = r"^#tk(\s*\d+)+\s*$"
+    cleaned_text = re.sub(pattern, "", text, flags=re.MULTILINE)
+    
+    return cleaned_text
+
+def extract_sentence_and_glosses(text):
+    pattern = r"(# :: snt \d+.*?)# sentence level graph:(.*?)(?=#|\Z)"
+
+    matches = re.findall(pattern, text, re.DOTALL)
+    sub_pattern = r"#\S*\s*"
+
+    return [(re.sub(sub_pattern, "", clean_token_labels(header.strip())), graph.strip()) for header, graph in matches]
+
+
 def process_input_document(document):
-    snt_graphs = extract_graphs(document, "sentence")
-    #document_graphs = extract_graphs(document, "document")
+    snt_graphs = extract_sentence_and_glosses(document)
+
     word_cache = {}
 
-    for snt in snt_graphs:
+    for gloss, snt in snt_graphs:
         try:
             decoded = penman.decode(snt)
             for instance in decoded.instances():
                 inst_name = instance[0]
                 if inst_name not in word_cache:
-                    word_cache[inst_name] = snt
+                    word_cache[inst_name] = gloss + "\n\n\n" + snt
 
             #word_cache[top] = snt
         except:
             pass
 
+    doc_graphs = extract_graphs(document, "document")
 
+    for doc_graph in doc_graphs:
+        try:
+            decoded = penman.decode(doc_graph)
+            for instance in decoded.instances():
+                inst_name = instance[0]
+                if inst_name not in word_cache:
+                    word_cache[inst_name] = doc_graph
+        except:
+            pass
 
     return word_cache
 
