@@ -1,8 +1,8 @@
 {
   "name": "umr-doc-helper",
   "displayName": "UMR Document Annotation Helper",
-  "version": "0.0.1",
-  "publisher": "University of Colorado LECS Lab",
+  "version": "0.0.22",
+  "publisher": "mabu4315",
   "engines": {
     "vscode": "^1.60.0"
   },
@@ -15,9 +15,11 @@
   ],
   "files": [
   "out",
-  "scripts",
-  "src/*",
-  "package.json"
+  "src/process_document.py",
+  "src/requirements.txt",
+  "src/dist/process_document.exe",
+  "package.json",
+  "LICENSE"
 ],
   "main": "./out/extension.js",  
   "contributes": {

@@ -58,7 +58,6 @@ def process_input_document(document):
     return word_cache
 
 
-
 if __name__ == "__main__":
     print("building tooltips for umr document...", file=sys.stderr)
 

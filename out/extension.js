@@ -1,36 +1,116 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
-const vscode = __importStar(require("vscode"));
-const cp = __importStar(require("child_process"));
-let wordTooltipCache = {}; // Cache to store tooltips for words
-let lastDocumentText = ''; // Track the document content to detect changes
+const vscode = require('vscode');
+const path = require('path');
+const os = require('os');
+const cp = require('child_process');
+// const fs = require('fs');
+let wordTooltipCache = {};
+let lastDocumentText = ''; // for caching results
+// function findPythonExecutable(): Promise<string> {
+//     return new Promise((resolve, reject) => {
+//         const pythonCandidates = ['python', 'python3', 'py'];  // Common Python executables
+//         const whichCmd = process.platform === 'win32' ? 'where' : 'which';  // Command to check for executables
+//         let foundPython = false;
+//         for (const candidate of pythonCandidates) {
+//             try {
+//                 cp.execSync(`${whichCmd} ${candidate}`);
+//                 console.log(`Using Python executable: ${candidate}`);
+//                 resolve(candidate);  // Return the first working Python executable
+//                 foundPython = true;
+//                 break;
+//             } catch (err) {
+//                 // If the candidate isn't found, continue to the next one
+//             }
+//         }
+//         if (!foundPython) {
+//             reject(new Error('No Python executable found! Please ensure Python is installed and added to PATH.'));
+//         }
+//     });
+// }
+// // Function to check if a virtual environment exists and create it if necessary
+// function checkOrCreateVirtualEnv(pythonExec: string): Thenable<void> {
+//     return new Promise((resolve, reject) => {
+//         if (!fs.existsSync(venvPath)) {
+//             console.log('Virtual environment not found. Creating one...');
+//             const createVenv = cp.spawn(pythonExec, ['-m', 'venv', venvPath]);
+//             createVenv.on('error', (err: any) => {
+//                 console.error('Error creating virtual environment:', err);
+//                 reject(err);
+//             });
+//             createVenv.on('close', (code: number) => {
+//                 if (code === 0) {
+//                     console.log('Virtual environment created successfully.');
+//                     installDependencies(pythonExec, resolve, reject);
+//                 } else {
+//                     reject(`Failed to create virtual environment. Exit code: ${code}`);
+//                 }
+//             });
+//         } else {
+//             console.log('Virtual environment found.');
+//             installDependencies(pythonExec, resolve, reject);
+//         }
+//     });
+// }
+function getExecutablePath() {
+    const platform = os.platform();
+    const extensionPath = vscode.extensions.getExtension('mabu4315.umr-doc-helper').extensionPath;
+    let executableName;
+    let executableDir;
+    if (platform === 'win32') {
+        executableName = 'process_document.exe';
+        executableDir = 'dist';
+    }
+    else {
+        vscode.window.showErrorMessage('Unsupported platform');
+        return null;
+    }
+    return path.join(extensionPath, 'src', executableDir, executableName);
+}
+function runExecutable() {
+    const executablePath = getExecutablePath();
+    if (!executablePath) {
+        return;
+    }
+    cp.execFile(executablePath, (error, stdout, stderr) => {
+        if (error) {
+            vscode.window.showErrorMessage(`Execution error: ${error.message}`);
+            return;
+        }
+        if (stderr) {
+            vscode.window.showWarningMessage(`Standard error: ${stderr}`);
+        }
+        vscode.window.showInformationMessage(`Output: ${stdout}`);
+    });
+}
+// // Function to install dependencies inside the virtual environment
+// function installDependencies(pythonExec: string, resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: any) => void) {
+//     if (fs.existsSync(requirementsFile)) {
+//         console.log('Installing dependencies...');
+//         const venvPython = path.join(venvPath, 'Scripts', pythonExec); // assumes windows I think
+//         const pipInstall = cp.spawn(venvPython, ['-m', 'pip', 'install', '-r', requirementsFile]);
+//         pipInstall.on('error', (err: any) => {
+//             console.error('Error installing dependencies:', err);
+//             reject(err);
+//         });
+//         pipInstall.on('close', (code: number) => {
+//             if (code === 0) {
+//                 console.log('Dependencies installed successfully.');
+//                 resolve();
+//             } else {
+//                 reject(`Failed to install dependencies. Exit code: ${code}`);
+//             }
+//         });
+//     } else {
+//         console.log('No requirements.txt found. Skipping dependency installation.');
+//         console.log(requirementsFile)
+//         resolve();
+//     }
+// }
 function activate(context) {
-    console.log('Extension "my-extension" is now active!');
+    console.log('umr-doc-helper is now active!');
     // Register a hover provider for all file types
     let disposable = vscode.languages.registerHoverProvider({ scheme: 'file', language: '*' }, {
         provideHover(document, position, token) {
@@ -59,82 +139,49 @@ function activate(context) {
         }
     });
     context.subscriptions.push(disposable);
-    // Listen for document changes to update the cache when the document changes
-    vscode.workspace.onDidChangeTextDocument(event => {
+    vscode.workspace.onDidChangeTextDocument((event) => {
         const documentText = event.document.getText();
         if (documentText !== lastDocumentText) {
             lastDocumentText = documentText;
             runPythonScriptForTooltips(documentText);
         }
     });
-    // Run the Python script and build the cache when the document is first opened
     if (vscode.window.activeTextEditor) {
         const initialDocumentText = vscode.window.activeTextEditor.document.getText();
         lastDocumentText = initialDocumentText;
         runPythonScriptForTooltips(initialDocumentText);
     }
 }
-// Function to run the Python script and update the cache with tooltips for all words
 function runPythonScriptForTooltips(documentText) {
     return new Promise((resolve, reject) => {
-        const pythonPath = 'python'; // Ensure Python is installed and available
-        const scriptPath = vscode.Uri.file(__dirname + '/../src/process_document.py').fsPath;
-        // Log the Python script path
-        console.log(`Running Python script at: ${scriptPath}`);
-        try {
-            // Spawn the Python process
-            const pythonProcess = cp.spawn(pythonPath, [scriptPath]);
-            // Ensure the Python process started successfully
-            pythonProcess.on('error', (err) => {
-                console.error('Failed to start Python process:', err);
-                reject(err); // Reject the promise on error
-            });
-            // Send the entire document text to the Python script via stdin
-            pythonProcess.stdin.write(documentText, (err) => {
-                if (err) {
-                    console.error('Error writing to Python stdin:', err);
-                    reject(err); // Reject if there's an error writing
-                }
-                else {
-                    console.log('Document text sent to Python script.');
-                    pythonProcess.stdin.end(); // End stdin after writing
-                }
-            });
-            // Capture stdout from the Python script (should contain the cache for tooltips)
-            pythonProcess.stdout.on('data', (data) => {
-                console.log('Received data from Python script.');
-                try {
-                    const result = JSON.parse(data.toString());
-                    // for (let word in result) {
-                    //     result[word] = result[word]
-                    //         .replace(/\n/g, '\n\n')
-                    //         .replace(new RegExp(`\\b${word}\\b`, 'g'), `**${word}**`);
-                    // }
-                    console.log('Parsed result from Python:', result);
-                    wordTooltipCache = result; // Update the cache with the new tooltips
-                    resolve(); // Resolve when the cache is updated
-                }
-                catch (error) {
-                    console.error('Failed to parse Python output:', error);
-                    resolve(); // Still resolve to avoid blocking the UI
-                }
-            });
-            // Capture stderr for debugging (log any errors from the Python script)
-            pythonProcess.stderr.on('data', (data) => {
-                console.error(`Python stderr: ${data.toString()}`);
-            });
-            // Log when the process finishes
-            pythonProcess.on('close', (code) => {
-                console.log(`Python script finished with code ${code}`);
-            });
+        const executablePath = getExecutablePath();
+        if (!executablePath) {
+            console.log('No executable found');
+            return;
         }
-        catch (error) {
-            console.error('Error spawning Python process:', error);
-            reject(error);
-        }
+        const child = cp.spawn(executablePath);
+        child.stdin.write(documentText);
+        child.stdin.end();
+        let output = '';
+        child.stdout.on('data', (data) => {
+            output += data.toString();
+        });
+        child.stdout.on('end', () => {
+            console.log('Python script ran.');
+            try {
+                const result = JSON.parse(output);
+                console.log('Parsed result from Python:', result);
+                wordTooltipCache = result; // Update the cache with the new tooltips
+                resolve(); // Resolve when the cache is updated
+            }
+            catch (error) {
+                console.error('Failed to parse Python output:', error);
+                resolve(); // Still resolve to avoid blocking the UI
+            }
+        });
     });
 }
 function deactivate() {
-    console.log('Extension "my-extension" is now deactivated');
+    console.log('umr-annotaiton-helper is now deactivated');
 }
 //# sourceMappingURL=extension.js.map
