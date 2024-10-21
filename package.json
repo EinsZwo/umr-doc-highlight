@@ -1,7 +1,7 @@
 {
   "name": "umr-doc-helper",
   "displayName": "UMR Document Annotation Helper",
-  "version": "0.0.22",
+  "version": "0.0.3",
   "publisher": "mabu4315",
   "engines": {
     "vscode": "^1.60.0"
