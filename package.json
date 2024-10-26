@@ -26,7 +26,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p .",
+    "compile": "tsc -p . --skipLibCheck",
     "watch": "tsc -watch -p .",
     "postinstall": "node ./node_modules/vscode/bin/install"
   },

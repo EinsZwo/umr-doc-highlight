@@ -1,4 +1,5 @@
 "use strict";
+// @ts-nocheck
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
@@ -6,54 +7,8 @@ const vscode = require('vscode');
 const path = require('path');
 const os = require('os');
 const cp = require('child_process');
-// const fs = require('fs');
 let wordTooltipCache = {};
 let lastDocumentText = ''; // for caching results
-// function findPythonExecutable(): Promise<string> {
-//     return new Promise((resolve, reject) => {
-//         const pythonCandidates = ['python', 'python3', 'py'];  // Common Python executables
-//         const whichCmd = process.platform === 'win32' ? 'where' : 'which';  // Command to check for executables
-//         let foundPython = false;
-//         for (const candidate of pythonCandidates) {
-//             try {
-//                 cp.execSync(`${whichCmd} ${candidate}`);
-//                 console.log(`Using Python executable: ${candidate}`);
-//                 resolve(candidate);  // Return the first working Python executable
-//                 foundPython = true;
-//                 break;
-//             } catch (err) {
-//                 // If the candidate isn't found, continue to the next one
-//             }
-//         }
-//         if (!foundPython) {
-//             reject(new Error('No Python executable found! Please ensure Python is installed and added to PATH.'));
-//         }
-//     });
-// }
-// // Function to check if a virtual environment exists and create it if necessary
-// function checkOrCreateVirtualEnv(pythonExec: string): Thenable<void> {
-//     return new Promise((resolve, reject) => {
-//         if (!fs.existsSync(venvPath)) {
-//             console.log('Virtual environment not found. Creating one...');
-//             const createVenv = cp.spawn(pythonExec, ['-m', 'venv', venvPath]);
-//             createVenv.on('error', (err: any) => {
-//                 console.error('Error creating virtual environment:', err);
-//                 reject(err);
-//             });
-//             createVenv.on('close', (code: number) => {
-//                 if (code === 0) {
-//                     console.log('Virtual environment created successfully.');
-//                     installDependencies(pythonExec, resolve, reject);
-//                 } else {
-//                     reject(`Failed to create virtual environment. Exit code: ${code}`);
-//                 }
-//             });
-//         } else {
-//             console.log('Virtual environment found.');
-//             installDependencies(pythonExec, resolve, reject);
-//         }
-//     });
-// }
 function getExecutablePath() {
     const platform = os.platform();
     const extensionPath = vscode.extensions.getExtension('mabu4315.umr-doc-helper').extensionPath;
@@ -85,30 +40,18 @@ function runExecutable() {
         vscode.window.showInformationMessage(`Output: ${stdout}`);
     });
 }
-// // Function to install dependencies inside the virtual environment
-// function installDependencies(pythonExec: string, resolve: (value: void | PromiseLike<void>) => void, reject: (reason?: any) => void) {
-//     if (fs.existsSync(requirementsFile)) {
-//         console.log('Installing dependencies...');
-//         const venvPython = path.join(venvPath, 'Scripts', pythonExec); // assumes windows I think
-//         const pipInstall = cp.spawn(venvPython, ['-m', 'pip', 'install', '-r', requirementsFile]);
-//         pipInstall.on('error', (err: any) => {
-//             console.error('Error installing dependencies:', err);
-//             reject(err);
-//         });
-//         pipInstall.on('close', (code: number) => {
-//             if (code === 0) {
-//                 console.log('Dependencies installed successfully.');
-//                 resolve();
-//             } else {
-//                 reject(`Failed to install dependencies. Exit code: ${code}`);
-//             }
-//         });
-//     } else {
-//         console.log('No requirements.txt found. Skipping dependency installation.');
-//         console.log(requirementsFile)
-//         resolve();
-//     }
-// }
+function generateAlignedText(tiers, colWidths) {
+    return tiers.map(tier => {
+        return tier.map((word, colIndex) => {
+            return word.padEnd(colWidths[colIndex], ' ');
+        }).join(' ');
+    }).join('\n');
+}
+function createMarkdownContent(alignedText) {
+    return `\`\`\`plaintext
+${alignedText}
+\`\`\``;
+}
 function activate(context) {
     console.log('umr-doc-helper is now active!');
     // Register a hover provider for all file types
@@ -121,10 +64,16 @@ function activate(context) {
             if (word) {
                 if (wordTooltipCache[word]) {
                     console.log(`Tooltip from cache for word '${word}': ${wordTooltipCache[word]}`);
-                    const tooltipText = wordTooltipCache[word] || '';
-                    const formattedTooltip = tooltipText
-                        .replace(/\t/g, '&nbsp;&nbsp;&nbsp;&nbsp;') // Replace tabs with 4 non-breaking spaces
-                        .replace(/^\s+/gm, match => match.replace(/ /g, '&nbsp;')) // Replace leading spaces with non-breaking spaces
+                    const tooltipInfo = wordTooltipCache[word] || '';
+                    if (!tooltipInfo) {
+                        return vscode.Hover(tooltipInfo);
+                    }
+                    const [first_lines, gloss_lines, column_widths, last_lines, graph] = tooltipInfo;
+                    let tooltip = first_lines.join("\n") + "\n"
+                        + createMarkdownContent(generateAlignedText(gloss_lines, column_widths)) + "\n" // gloss lines get spaced padding and need a monospaced font
+                        + last_lines + "\n\n"
+                        + graph.replace(/\t/g, '&nbsp;&nbsp;&nbsp;&nbsp;').replace(/^\s+/gm, match => match.replace(/ /g, '&nbsp;'));
+                    const formattedTooltip = tooltip
                         .split('\n') // Split the tooltip into individual lines
                         .map(line => line.replace(new RegExp(`\\b${word}\\b`, 'g'), `**${word}**`)) // Bold the hovered word on each line
                         .join('  \n'); // Join lines with a soft line break (two spaces + \n)
