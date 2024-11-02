@@ -1,7 +1,7 @@
 {
   "name": "umr-doc-helper",
   "displayName": "UMR Document Annotation Helper",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "publisher": "mabu4315",
   "engines": {
     "vscode": "^1.60.0"
@@ -18,15 +18,49 @@
   "src/process_document.py",
   "src/requirements.txt",
   "src/dist/process_document.exe",
+  "data",
+  "data/tooltips.json",
+  "src/generate_roleset_tooltips.py",
   "package.json",
   "LICENSE"
 ],
   "main": "./out/extension.js",  
   "contributes": {
-  },
+    "configuration": {
+      "type": "object",
+      "title": "UMR Annotation Macro Settings",
+      "properties": {
+        "macroExtension.macros": {
+          "type": "object",
+          "default": {
+            "shrug": "¯\\_(ツ)_/¯",
+            "tableflip": "(╯°□°）╯︵ ┻━┻"
+          },
+          "description": "User-defined macros for the UMR Annotation Extension."
+        }
+      }
+    },
+  "commands": [
+    {
+      "command": "extension.expandMacro",
+      "title": "Expand UMR Macro"
+    },
+    {
+      "command": "macroExtension.editMacros",
+      "title": "Edit UMR Macros"
+    }
+  ],
+  "keybindings": [
+    {
+      "key": "tab",
+      "command": "extension.expandMacro",
+      "when": "editorTextFocus && !editorHasSelection && !suggestWidgetVisible"
+    }
+  ]
+},
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p . --skipLibCheck",
+    "compile": "tsc -p .",
     "watch": "tsc -watch -p .",
     "postinstall": "node ./node_modules/vscode/bin/install"
   },
