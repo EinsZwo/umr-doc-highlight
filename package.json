@@ -27,26 +27,44 @@
   "main": "./out/extension.js",  
   "contributes": {
     "configuration": {
-      "type": "object",
-      "title": "UMR Annotation Macro Settings",
-      "properties": {
-        "macroExtension.macros": {
-          "type": "object",
-          "default": {
-            "shrug": "¯\\_(ツ)_/¯",
-            "tableflip": "(╯°□°）╯︵ ┻━┻"
+        "type": "object",
+        "title": "UMR Annotation Configuration",
+        "properties": {
+          "extension.enableDiagnostics": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable diagnostics for duplicate graph identifiers in a single document."
           },
-          "description": "User-defined macros for the UMR Annotation Extension."
+          "extension.macros": {
+            "type": "object",
+            "description": "User-defined macros. Each key is the macro pattern, and the value is the replacement text. Supports regular expressions and capture groups.",
+            "additionalProperties": {
+              "type": "string",
+              "description": "The replacement text for the macro."
+            },
+            "default": {
+              "p1s": "(p / person \\n\\t:refer-person 1\\n\\t:refer-number singular)",
+              "p1p": "(p / person \\n\\t:refer-person 1\\n\\t:refer-number plural)",
+              "p2s": "(p / person \\n\\t:refer-person 2\\n\\t:refer-number singular)",
+              "p2p": "(p / person \\n\\t:refer-person 2\\n\\t:refer-number plural)",
+              "p3s": "(p / person \\n\\t:refer-person 3\\n\\t:refer-number singular)",
+              "p3p": "(p / person \\n\\t:refer-person 3\\n\\t:refer-number plural)",
+              "ord(\\\\d+)": "(o / ordinal-entity :value $1)"
+            }
+          }
         }
-      }
-    },
+      },
   "commands": [
+    {
+      "command": "extension.goToLine",
+      "title": "Go to Line"
+    },
     {
       "command": "extension.expandMacro",
       "title": "Expand UMR Macro"
     },
     {
-      "command": "macroExtension.editMacros",
+      "command": "extension.editMacros",
       "title": "Edit UMR Macros"
     }
   ],

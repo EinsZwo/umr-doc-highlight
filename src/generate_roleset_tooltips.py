@@ -12,22 +12,30 @@ def convert_roleset_to_markdown(xml_data):
     markdown_lines = []
 
     # Header: roleset id
-    markdown_lines.append(f"# {roleset_id}")
+    markdown_lines.append(f"## {roleset_id}")
 
     # Subheader: roleset name
-    markdown_lines.append(f"## {roleset_name}")
+    markdown_lines.append(f"### {roleset_name}")
     markdown_lines.append("")
 
     # Aliases
     aliases = root.find('aliases')
     if aliases is not None and len(aliases):
-        markdown_lines.append("### Aliases")
-        markdown_lines.append("| Alias | POS |")
-        markdown_lines.append("|-------|-----|")
+        markdown_lines.append("#### Aliases")
+        alias_entries = []
+        max_alias_length = 0
+
         for alias in aliases.findall('alias'):
             alias_text = alias.text or ''
             alias_pos = alias.attrib.get('pos', '')
-            markdown_lines.append(f"| {alias_text} | {alias_pos} |")
+            alias_entries.append((alias_text, alias_pos))
+            if len(alias_text) > max_alias_length:
+                max_alias_length = len(alias_text)
+
+        for alias_text, alias_pos in alias_entries:
+            padding = ' ' * (max_alias_length - len(alias_text))
+            markdown_lines.append(f"- {alias_text}{padding}  (*{alias_pos}*)")
+
         markdown_lines.append("")
 
     # Roles
@@ -72,7 +80,7 @@ def main():
             text = "\n".join(infile.readlines()[2:])
             process_rolesets(text, tooltips)
 
-    with open("tooltips.json", 'w+', encoding='utf-8') as outfile:
+    with open("../data/tooltips.json", 'w+', encoding='utf-8') as outfile:
         json.dump(tooltips, outfile, ensure_ascii=False, indent=4)
 
 

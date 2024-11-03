@@ -1,5 +1,13 @@
 // @ts-nocheck
 
+let diagnosticCollection: vscode.DiagnosticCollection;
+
+
+interface MacroDefinition {
+  pattern: string;    
+  replacement: string;    
+}
+
 import { rejects } from "assert";
 import { DebugConsoleMode } from "vscode";
 import * as fs from 'fs';
@@ -12,6 +20,183 @@ const cp = require('child_process');
 let wordTooltipCache: { [word: string]: string } = {}; 
 let lastDocumentText = '';  // for caching results
 let rolesetCache: { [word: string]: string} = {}
+
+let timeout: NodeJS.Timer | undefined = undefined;
+
+function triggerDiagnosticsUpdate(document: vscode.TextDocument) {
+  if (timeout) {
+    clearTimeout(timeout);
+  }
+  timeout = setTimeout(() => {
+    updateDiagnostics(document);
+    timeout = undefined;
+  }, 500); // Adjust the delay as needed
+}
+
+function updateDiagnostics(document: vscode.TextDocument): void {
+  const config = vscode.workspace.getConfiguration('extension');
+  const diagnosticsEnabled = config.get<boolean>('enableDiagnostics', true);
+
+  if (!diagnosticsEnabled) {
+    // Clear any existing diagnostics if diagnostics are disabled
+    diagnosticCollection.set(document.uri, []);
+    return;
+  }
+
+  if (document.languageId !== 'plaintext') {
+    // Replace 'plaintext' with your specific language id if applicable
+    return;
+  }
+
+  const diagnostics: vscode.Diagnostic[] = [];
+  const text = document.getText();
+
+  // Regex to match patterns like (identifier /
+  const pattern = /\(\s*([a-zA-Z0-9_]+)\s*\/\s*/g;
+  let match: RegExpExecArray | null;
+
+  interface IdentifierOccurrence {
+    range: vscode.Range;
+    lineNumber: number;
+    lineText: string;
+  }
+
+  const identifiers: { [key: string]: IdentifierOccurrence[] } = {};
+
+  while ((match = pattern.exec(text))) {
+    const identifier = match[1];
+
+    // Get the start position of the identifier
+    const startPos = document.positionAt(match.index + match[0].indexOf(identifier));
+    const endPos = startPos.translate(0, identifier.length);
+    const range = new vscode.Range(startPos, endPos);
+
+    // Get line number and line text
+    const lineNumber = startPos.line;
+    const lineText = document.lineAt(lineNumber).text.trim();
+
+    const occurrence: IdentifierOccurrence = {
+      range,
+      lineNumber,
+      lineText,
+    };
+
+    if (!identifiers[identifier]) {
+      identifiers[identifier] = [];
+    }
+    identifiers[identifier].push(occurrence);
+  }
+
+  // Find duplicates and create diagnostics
+  for (const identifier in identifiers) {
+    const occurrences = identifiers[identifier];
+    if (occurrences.length > 1) {
+      // For each occurrence, create a diagnostic
+      for (let i = 0; i < occurrences.length; i++) {
+        const currentOccurrence = occurrences[i];
+
+        // Collect information about other occurrences
+        const otherOccurrencesInfo = occurrences
+          .filter((_, index) => index !== i) // Exclude current occurrence
+          .map(occurrence => {
+            const lineNumber = occurrence.lineNumber;
+            const lineText = occurrence.lineText;            
+            return `[Line ${lineNumber + 1}]: ${lineText}`;
+          })
+          .join('\n');
+
+        const message = `Duplicate identifier '${identifier}'. ` //Also found at:\n${otherOccurrencesInfo}`;
+        //message.isTrusted = true; // Allow command URIs in the markdown
+
+        const diagnostic = new vscode.Diagnostic(
+          currentOccurrence.range,
+          message,
+          vscode.DiagnosticSeverity.Warning
+        );
+        diagnostic.source = 'UMR duplicate variables';
+
+        diagnostics.push(diagnostic);
+      }
+    }
+  }
+
+  // Set the diagnostics for the document
+  diagnosticCollection.set(document.uri, diagnostics);
+}
+
+
+
+function getIdentifierOccurrences(document: vscode.TextDocument, identifier: string): IdentifierOccurrence[] {
+  const text = document.getText();
+  const pattern = new RegExp(`\\(\\s*(${identifier})\\s*\\/\\s*`, 'g');
+  let match: RegExpExecArray | null;
+
+  const occurrences: IdentifierOccurrence[] = [];
+
+  while ((match = pattern.exec(text))) {
+    const startPos = document.positionAt(match.index + match[0].indexOf(identifier));
+    const endPos = startPos.translate(0, identifier.length);
+    const range = new vscode.Range(startPos, endPos);
+
+    const lineNumber = startPos.line;
+    const lineText = document.lineAt(lineNumber).text.trim();
+
+    const occurrence: IdentifierOccurrence = {
+      range,
+      lineNumber,
+      lineText,
+    };
+
+    occurrences.push(occurrence);
+  }
+
+  return occurrences;
+}
+
+class DuplicateIdentifierHoverProvider implements vscode.HoverProvider {
+  public provideHover(
+    document: vscode.TextDocument,
+    position: vscode.Position,
+    token: vscode.CancellationToken
+  ): vscode.ProviderResult<vscode.Hover> {
+    const range = document.getWordRangeAtPosition(position, /\b[a-zA-Z0-9_]+\b/);
+    if (!range) {
+      return;
+    }
+
+    const word = document.getText(range);
+
+    // Check if the word is a duplicate identifier
+    const occurrences = getIdentifierOccurrences(document, word);
+    if (occurrences.length <= 1) {
+      return;
+    }
+
+    // Create hover content
+    const otherOccurrences = occurrences.filter(occ => !occ.range.contains(position));
+    if (otherOccurrences.length === 0) {
+      return;
+    }
+
+    const uri = document.uri;
+    const links = otherOccurrences.map(occurrence => {
+      const lineNumber = occurrence.lineNumber;
+      const lineText = occurrence.lineText;
+
+      // Create a command URI
+      const commandUri = encodeURI(
+        `command:extension.goToLine?${encodeURIComponent(JSON.stringify([uri.toString(), occurrence.lineNumber]))}`
+      );
+
+      return `- [Line ${lineNumber + 1}](${commandUri}): ${lineText}`;
+    });
+
+    const markdownContent = new vscode.MarkdownString(`\nDeclarations of '${word}' in this document:\n${links.join('\n')}`);
+    markdownContent.isTrusted = true; // Allow command URIs
+
+    return new vscode.Hover(markdownContent, range);
+  }
+}
 
 
 function getExecutablePath() {
@@ -72,20 +257,52 @@ ${alignedText}
 }
 
 
-let macros: { [key: string]: string } = {};
+let macros: MacroDefinition[] = [];
 
 function loadMacros() {
-  const config = vscode.workspace.getConfiguration('macroExtension');
-  const userMacros = config.get<{ [key: string]: string }>('macros', {});
-  const defaultMacros = {
-      'p1s': '(p / person \n\t:refer-person 1\n\t:refer-number singular)',
-      'p1p': '(p / person \n\t:refer-person 1\n\t:refer-number plural)',
-      'p2s': '(p / person \n\t:refer-person 2\n\t:refer-number singular)',
-      'p2p': '(p / person \n\t:refer-person 2\n\t:refer-number plural)',
-      'p3s': '(p / person \n\t:refer-person 3\n\t:refer-number singular)',
-      'p3p': '(p / person \n\t:refer-person 3\n\t:refer-number plural)'
-    };
-  macros = { ...defaultMacros, ...userMacros };
+  const config = vscode.workspace.getConfiguration('extension');
+  const userMacrosObject = config.get<{ [pattern: string]: string }>('macros', {});
+  const userMacros: MacroDefinition[] = Object.entries(userMacrosObject).map(([pattern, replacement]) => ({
+    pattern,
+    replacement,
+  }));
+
+  console.log("Loaded user macros...")
+  for (let macro of userMacros) {
+    console.log(` ${macro.pattern} -> ${macro.replacement}`)
+  }
+
+  const defaultMacros: MacroDefinition[] = [
+    {
+      pattern: 'p1s',
+      replacement: '(p / person \n\t:refer-person 1\n\t:refer-number singular)',
+    },
+    {
+      pattern: 'p1p',
+      replacement: '(p / person \n\t:refer-person 1\n\t:refer-number plural)',
+    },
+    {
+      pattern: 'p2s',
+      replacement: '(p / person \n\t:refer-person 2\n\t:refer-number singular)',
+    },
+    {
+      pattern: 'p2p',
+      replacement: '(p / person \n\t:refer-person 2\n\t:refer-number plural)',
+    },
+    {
+      pattern: 'p3s',
+      replacement: '(p / person \n\t:refer-person 3\n\t:refer-number singular)',
+    },
+    {
+      pattern: 'p3p',
+      replacement: '(p / person \n\t:refer-person 3\n\t:refer-number plural)',
+    },
+    {
+      pattern: 'ord(\\d+)',
+      replacement: '(o / ordinal-entity :value $1)',
+    },
+  ];
+  macros = [  ...userMacros, ...defaultMacros ];
 }
 
 
@@ -93,7 +310,7 @@ loadMacros();
 
 // Watch for configuration changes
 vscode.workspace.onDidChangeConfiguration(event => {
-  if (event.affectsConfiguration('macroExtension.macros')) {
+  if (event.affectsConfiguration('extension.macros')) {
     loadMacros();
   }
 });
@@ -224,56 +441,171 @@ export function activate(context: { subscriptions: any[]; }) {
       // Get the text from the start of the line to the cursor
       const lineText = document.lineAt(position.line).text.substr(0, position.character);
   
-      // Extract the last word (potential macro shortcut)
-      const match = lineText.match(/(\S+)\s*$/);
-      const shortcut = match ? match[1] : '';
-  
-      const macroText = macros[shortcut];
-      if (macroText) {
-        // **Step 1: Get the current line's indentation**
-        const line = document.lineAt(position.line);
-        const lineIndentation = line.text.substr(0, line.firstNonWhitespaceCharacterIndex);
-  
-        const macroLines = macroText.split('\n');
-        const indentedMacroLines = macroLines.map((lineContent, index) => {
+      // Iterate over macros to find a matching pattern
+    let matched = false;
+    for (const macro of macros) {
+      try {
+        const regex = new RegExp(`${macro.pattern}$`);
+        const match = lineText.match(regex);
 
-          if (index === 0) {
-            // First line: use current indentation
-            return lineContent;
-          } else {
-            // Subsequent lines: add indent level
-            return lineIndentation + lineContent;
-          }
-        });
+        if (match) {
+          const matchedText = match[0];
+          const startPosition = position.translate(0, -matchedText.length);
+          const range = new vscode.Range(startPosition, position);
+          
+          const matches = match.slice(1); // The captured groups
+          const macroText = processReplacementString(macro.replacement, matches);
 
-        const finalMacroText = indentedMacroLines.join('\n');
+          if (macroText) {
+            // **Step 1: Get the current line's indentation**
+            const line = document.lineAt(position.line);
+            const lineIndentation = line.text.substr(0, line.firstNonWhitespaceCharacterIndex);
+      
+            const macroLines = macroText.split('\n');
+            const indentedMacroLines = macroLines.map((lineContent, index) => {
+
+              if (index === 0) {
+                // First line: use current indentation
+                return lineContent;
+              } else {
+                // Subsequent lines: add indent level
+                return lineIndentation + lineContent;
+              }
+            });
+      
+          const finalMacroText = indentedMacroLines.join('\n');
   
-        // **Step 4: Replace the shortcut with the indented macro text**
-        const startPosition = position.translate(0, -shortcut.length);
-        const range = new vscode.Range(startPosition, position);
-  
-        await editor.edit(editBuilder => {
-          editBuilder.replace(range, finalMacroText);
-        });
-  
-        // **Optional: Move the cursor to the end of the inserted text**
-        const lastLine = startPosition.line + indentedMacroLines.length - 1;
-        const lastChar = indentedMacroLines[indentedMacroLines.length - 1].length;
-        const newPosition = new vscode.Position(lastLine, lastChar);
-        editor.selection = new vscode.Selection(newPosition, newPosition);
-      } else {
-        // No macro found, insert a tab character
-        await vscode.commands.executeCommand('tab');
-      }
-    });
+          // **Replace shortcut with macro text
+          await editor.edit(editBuilder => {
+            editBuilder.replace(range, finalMacroText);
+          });
+
+          // **Calculate the new cursor position, accounting for indentation**
+          const replacementLines = finalMacroText.split('\n');
+          const numberOfLinesInserted = replacementLines.length - 1;
+          const newLine = startPosition.line + numberOfLinesInserted;
+
+          // Get the start column of the replacement (includes existing indentation)
+          const startColumn = startPosition.character;
+
+          // Length of the last line of the replacement text
+          const lastLine = replacementLines[replacementLines.length - 1];
+          const lastLineLength = lastLine.length;
+
+          // **Calculate the new character position**
+          let newChar = startColumn + lastLineLength;
+
+          // **Create the new position**
+          const newPosition = new vscode.Position(newLine, newChar);
+
+          // **Set the editor's selection to the new position**
+          editor.selection = new vscode.Selection(newPosition, newPosition);
+          editor.revealRange(new vscode.Range(newPosition, newPosition));
+
+          matched = true;
+          break
+
+        }
+    }
+  }
+    catch (error) {
+        console.log(error)
+        vscode.window.showErrorMessage(`Invalid regex pattern in macro: ${macro.pattern}`);
+    }
+  }
+
+  if (!matched) {
+      await vscode.commands.executeCommand('tab');
+  }
+  });
   
     context.subscriptions.push(macro_command);
 
-    let editMacrosCommand = vscode.commands.registerCommand('macroExtension.editMacros', () => {
-      vscode.commands.executeCommand('workbench.action.openSettings', 'macroExtension.macros');
+    let editMacrosCommand = vscode.commands.registerCommand('extension.editMacros', () => {
+      vscode.commands.executeCommand('workbench.action.openSettings', 'extension.macros');
     });
     
     context.subscriptions.push(editMacrosCommand);
+
+
+
+    // diagnostics for highlighting
+
+    diagnosticCollection = vscode.languages.createDiagnosticCollection('UMR duplicate variables');
+    context.subscriptions.push(diagnosticCollection);
+  
+    // Listen to document changes
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeTextDocument(event => {
+        triggerDiagnosticsUpdate(event.document);
+      })
+    );
+    
+    context.subscriptions.push(
+      vscode.workspace.onDidOpenTextDocument(document => {
+        triggerDiagnosticsUpdate(document);
+      })
+    );
+  
+    // Also, update diagnostics for all open documents when the extension is activated
+    vscode.workspace.textDocuments.forEach(document => {
+      triggerDiagnosticsUpdate(document);
+    });
+
+    // Re-run diagnostics for all open documents if the user setting changes
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration(event => {
+        if (event.affectsConfiguration('extension.enableDiagnostics')) {
+          vscode.workspace.textDocuments.forEach(document => {
+            updateDiagnostics(document);
+          });
+        }
+      })
+    );
+
+      // 
+    context.subscriptions.push(
+      vscode.commands.registerCommand('extension.goToLine', (uri: vscode.Uri, line: number) => {
+        const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === uri.toString());
+        if (editor) {
+          const position = new vscode.Position(line, 0);
+          editor.selection = new vscode.Selection(position, position);
+          editor.revealRange(new vscode.Range(position, position));
+        } else {
+          vscode.window.showTextDocument(uri).then(editor => {
+            const position = new vscode.Position(line, 0);
+            editor.selection = new vscode.Selection(position, position);
+            editor.revealRange(new vscode.Range(position, position));
+          });
+        }
+      })
+    );
+
+
+    context.subscriptions.push(
+      vscode.languages.registerHoverProvider(
+        { language: 'plaintext' },
+        new DuplicateIdentifierHoverProvider()
+      )
+    );
+    
+}
+
+function processReplacementString(replacement: string, matches: string[]): string {
+  // Replace $1, $2, etc., with the matched groups
+  let result = replacement.replace(/\$([0-9]+)/g, (_, index) => {
+    return matches[parseInt(index) - 1] || '';
+  });
+
+  // Process escape sequences
+  result = result.replace(/\\n/g, '\n')
+                 .replace(/\\t/g, '\t')
+                 .replace(/\\r/g, '\r')
+                 .replace(/\\'/g, '\'')
+                 .replace(/\\"/g, '"')
+                 .replace(/\\\\/g, '\\');
+
+  return result;
 }
 
 
@@ -314,5 +646,8 @@ function runPythonScriptForTooltips(documentText: string): Thenable<void> {
 }
 
 export function deactivate() {
-    console.log('umr-annotaiton-helper is now deactivated');
+    console.log('umr-annotation-helper is now deactivated');
+    if (diagnosticCollection) {
+      diagnosticCollection.dispose();
+    }
 }
