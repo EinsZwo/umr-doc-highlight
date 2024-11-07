@@ -491,8 +491,8 @@ function runPythonScriptForTooltips(documentText) {
     });
 }
 function deactivate() {
-    console.log('umr-annotation-helper is now deactivated');
     if (diagnosticCollection) {
+        diagnosticCollection.clear();
         diagnosticCollection.dispose();
     }
 }

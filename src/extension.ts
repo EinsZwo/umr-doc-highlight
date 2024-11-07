@@ -35,6 +35,7 @@ function triggerDiagnosticsUpdate(document: vscode.TextDocument) {
 }
 
 function updateDiagnostics(document: vscode.TextDocument): void {
+
   const config = vscode.workspace.getConfiguration('extension');
   const diagnosticsEnabled = config.get<boolean>('enableDiagnostics', true);
 
@@ -46,6 +47,8 @@ function updateDiagnostics(document: vscode.TextDocument): void {
   if (document.languageId !== 'plaintext') {
     return;
   }
+
+  console.log('Updating diagnostics');
 
   const diagnostics: vscode.Diagnostic[] = [];
   const text = document.getText();
@@ -289,8 +292,6 @@ vscode.workspace.onDidChangeConfiguration(event => {
 });
 
 export function activate(context: { subscriptions: any[]; }) {
-    console.log('UMR Annotation Helper is now active!');
-
     const tooltipsPath = path.join(context.extensionPath, 'data', 'tooltips.json');
     try {
       const fileContents = fs.readFileSync(tooltipsPath, 'utf8');
@@ -619,8 +620,8 @@ function runPythonScriptForTooltips(documentText: string): Thenable<void> {
 }
 
 export function deactivate() {
-    console.log('umr-annotation-helper is now deactivated');
     if (diagnosticCollection) {
+      diagnosticCollection.clear();
       diagnosticCollection.dispose();
     }
 }
