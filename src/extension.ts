@@ -24,13 +24,14 @@ let rolesetCache: { [word: string]: string} = {}
 let timeout: NodeJS.Timer | undefined = undefined;
 
 function triggerDiagnosticsUpdate(document: vscode.TextDocument) {
+  // time-gated for performance
   if (timeout) {
     clearTimeout(timeout);
   }
   timeout = setTimeout(() => {
     updateDiagnostics(document);
     timeout = undefined;
-  }, 500); // Adjust the delay as needed
+  }, 500); 
 }
 
 function updateDiagnostics(document: vscode.TextDocument): void {
@@ -38,20 +39,18 @@ function updateDiagnostics(document: vscode.TextDocument): void {
   const diagnosticsEnabled = config.get<boolean>('enableDiagnostics', true);
 
   if (!diagnosticsEnabled) {
-    // Clear any existing diagnostics if diagnostics are disabled
     diagnosticCollection.set(document.uri, []);
     return;
   }
 
   if (document.languageId !== 'plaintext') {
-    // Replace 'plaintext' with your specific language id if applicable
     return;
   }
 
   const diagnostics: vscode.Diagnostic[] = [];
   const text = document.getText();
 
-  // Regex to match patterns like (identifier /
+  // find things like "(identifier /""
   const pattern = /\(\s*([a-zA-Z0-9_]+)\s*\/\s*/g;
   let match: RegExpExecArray | null;
 
@@ -66,12 +65,9 @@ function updateDiagnostics(document: vscode.TextDocument): void {
   while ((match = pattern.exec(text))) {
     const identifier = match[1];
 
-    // Get the start position of the identifier
     const startPos = document.positionAt(match.index + match[0].indexOf(identifier));
     const endPos = startPos.translate(0, identifier.length);
     const range = new vscode.Range(startPos, endPos);
-
-    // Get line number and line text
     const lineNumber = startPos.line;
     const lineText = document.lineAt(lineNumber).text.trim();
 
@@ -95,9 +91,9 @@ function updateDiagnostics(document: vscode.TextDocument): void {
       for (let i = 0; i < occurrences.length; i++) {
         const currentOccurrence = occurrences[i];
 
-        // Collect information about other occurrences
+        // Collect information about other occurrences for the popup
         const otherOccurrencesInfo = occurrences
-          .filter((_, index) => index !== i) // Exclude current occurrence
+          .filter((_, index) => index !== i)
           .map(occurrence => {
             const lineNumber = occurrence.lineNumber;
             const lineText = occurrence.lineText;            
@@ -105,9 +101,7 @@ function updateDiagnostics(document: vscode.TextDocument): void {
           })
           .join('\n');
 
-        const message = `Duplicate identifier '${identifier}'. ` //Also found at:\n${otherOccurrencesInfo}`;
-        //message.isTrusted = true; // Allow command URIs in the markdown
-
+        const message = `Duplicate identifier '${identifier}'. ` 
         const diagnostic = new vscode.Diagnostic(
           currentOccurrence.range,
           message,
@@ -120,13 +114,13 @@ function updateDiagnostics(document: vscode.TextDocument): void {
     }
   }
 
-  // Set the diagnostics for the document
   diagnosticCollection.set(document.uri, diagnostics);
 }
 
 
 
 function getIdentifierOccurrences(document: vscode.TextDocument, identifier: string): IdentifierOccurrence[] {
+  // helper function to find all occurences of a certain UMR varianle ID
   const text = document.getText();
   const pattern = new RegExp(`\\(\\s*(${identifier})\\s*\\/\\s*`, 'g');
   let match: RegExpExecArray | null;
@@ -166,13 +160,11 @@ class DuplicateIdentifierHoverProvider implements vscode.HoverProvider {
 
     const word = document.getText(range);
 
-    // Check if the word is a duplicate identifier
     const occurrences = getIdentifierOccurrences(document, word);
     if (occurrences.length <= 1) {
       return;
     }
 
-    // Create hover content
     const otherOccurrences = occurrences.filter(occ => !occ.range.contains(position));
     if (otherOccurrences.length === 0) {
       return;
@@ -183,16 +175,15 @@ class DuplicateIdentifierHoverProvider implements vscode.HoverProvider {
       const lineNumber = occurrence.lineNumber;
       const lineText = occurrence.lineText;
 
-      // Create a command URI
       const commandUri = encodeURI(
         `command:extension.goToLine?${encodeURIComponent(JSON.stringify([uri.toString(), occurrence.lineNumber]))}`
       );
 
-      return `- [Line ${lineNumber + 1}](${commandUri}): ${lineText}`;
+      return `- [Line ${lineNumber + 1}](${commandUri} "Jump to line ${lineNumber+1}"): ${lineText}`;
     });
 
     const markdownContent = new vscode.MarkdownString(`\nDeclarations of '${word}' in this document:\n${links.join('\n')}`);
-    markdownContent.isTrusted = true; // Allow command URIs
+    markdownContent.isTrusted = true;
 
     return new vscode.Hover(markdownContent, range);
   }
@@ -200,6 +191,7 @@ class DuplicateIdentifierHoverProvider implements vscode.HoverProvider {
 
 
 function getExecutablePath() {
+    // finds the platform-specific Python executable for getting tooltip info
     const platform = os.platform();
     const extensionPath = vscode.extensions.getExtension('mabu4315.umr-doc-helper').extensionPath;
   
@@ -216,30 +208,10 @@ function getExecutablePath() {
   
     return path.join(extensionPath, 'src', executableDir, executableName);
   }
-  
-  
 
-  function runExecutable() {
-    const executablePath = getExecutablePath();
-  
-    if (!executablePath) {
-      return;
-    }
-  
-    cp.execFile(executablePath, (error: { message: any; }, stdout: any, stderr: any) => {
-      if (error) {
-        vscode.window.showErrorMessage(`Execution error: ${error.message}`);
-        return;
-      }
-      if (stderr) {
-        vscode.window.showWarningMessage(`Standard error: ${stderr}`);
-      }
-      vscode.window.showInformationMessage(`Output: ${stdout}`);
-    });
-  }
-  
 
 function generateAlignedText(tiers: Array<Array<string>>, colWidths: Array<number>) {
+  // aligns hoverbubble text for variable info
   if((!tiers) || (!tiers.map)) {
     return ""
   }
@@ -260,6 +232,7 @@ ${alignedText}
 let macros: MacroDefinition[] = [];
 
 function loadMacros() {
+  // loads the default and user-specified macros
   const config = vscode.workspace.getConfiguration('extension');
   const userMacrosObject = config.get<{ [pattern: string]: string }>('macros', {});
   const userMacros: MacroDefinition[] = Object.entries(userMacrosObject).map(([pattern, replacement]) => ({
@@ -267,48 +240,48 @@ function loadMacros() {
     replacement,
   }));
 
-  console.log("Loaded user macros...")
+  console.log("Loaded user macros...:")
   for (let macro of userMacros) {
     console.log(` ${macro.pattern} -> ${macro.replacement}`)
   }
 
-  const defaultMacros: MacroDefinition[] = [
-    {
-      pattern: 'p1s',
-      replacement: '(p / person \n\t:refer-person 1\n\t:refer-number singular)',
-    },
-    {
-      pattern: 'p1p',
-      replacement: '(p / person \n\t:refer-person 1\n\t:refer-number plural)',
-    },
-    {
-      pattern: 'p2s',
-      replacement: '(p / person \n\t:refer-person 2\n\t:refer-number singular)',
-    },
-    {
-      pattern: 'p2p',
-      replacement: '(p / person \n\t:refer-person 2\n\t:refer-number plural)',
-    },
-    {
-      pattern: 'p3s',
-      replacement: '(p / person \n\t:refer-person 3\n\t:refer-number singular)',
-    },
-    {
-      pattern: 'p3p',
-      replacement: '(p / person \n\t:refer-person 3\n\t:refer-number plural)',
-    },
-    {
-      pattern: 'ord(\\d+)',
-      replacement: '(o / ordinal-entity :value $1)',
-    },
-  ];
-  macros = [  ...userMacros, ...defaultMacros ];
+  // const defaultMacros: MacroDefinition[] = [
+  //   {
+  //     pattern: 'p1s',
+  //     replacement: '(p / person \n\t:refer-person 1\n\t:refer-number singular)',
+  //   },
+  //   {
+  //     pattern: 'p1p',
+  //     replacement: '(p / person \n\t:refer-person 1\n\t:refer-number plural)',
+  //   },
+  //   {
+  //     pattern: 'p2s',
+  //     replacement: '(p / person \n\t:refer-person 2\n\t:refer-number singular)',
+  //   },
+  //   {
+  //     pattern: 'p2p',
+  //     replacement: '(p / person \n\t:refer-person 2\n\t:refer-number plural)',
+  //   },
+  //   {
+  //     pattern: 'p3s',
+  //     replacement: '(p / person \n\t:refer-person 3\n\t:refer-number singular)',
+  //   },
+  //   {
+  //     pattern: 'p3p',
+  //     replacement: '(p / person \n\t:refer-person 3\n\t:refer-number plural)',
+  //   },
+  //   {
+  //     pattern: 'ord(\\d+)',
+  //     replacement: '(o / ordinal-entity :value $1)',
+  //   },
+  // ];
+  macros = [  ...userMacros ]//, ...defaultMacros ];
 }
 
 
 loadMacros();
 
-// Watch for configuration changes
+// Watch for configuration changes to update macros
 vscode.workspace.onDidChangeConfiguration(event => {
   if (event.affectsConfiguration('extension.macros')) {
     loadMacros();
@@ -321,9 +294,10 @@ export function activate(context: { subscriptions: any[]; }) {
     const tooltipsPath = path.join(context.extensionPath, 'data', 'tooltips.json');
     try {
       const fileContents = fs.readFileSync(tooltipsPath, 'utf8');
+      // TODO: make more customizable; allow specifing a Propbank-like resource that can be scraped and used to generate similar tooltips, but language-specific
+      // implement caching based on (git commit hashes?)
       rolesetCache = JSON.parse(fileContents);
       console.log("Loaded roleset tooltips")
-      console.log(` Sample entry activate-01: '${rolesetCache['activate-01']}'`)
     } catch (err) {
       vscode.window.showErrorMessage(`Failed to load tooltips: ${err.message}`);
     }
@@ -592,7 +566,8 @@ export function activate(context: { subscriptions: any[]; }) {
 }
 
 function processReplacementString(replacement: string, matches: string[]): string {
-  // Replace $1, $2, etc., with the matched groups
+  // helper for using capture groups in macros
+  // Replace matched groups
   let result = replacement.replace(/\$([0-9]+)/g, (_, index) => {
     return matches[parseInt(index) - 1] || '';
   });
@@ -632,14 +607,12 @@ function runPythonScriptForTooltips(documentText: string): Thenable<void> {
                 try {
 
                     const result = JSON.parse(output);
-                    //console.log('Parsed result from Python:', result);
-
                    
                     wordTooltipCache = result;  // Update the cache with the new tooltips
-                    resolve();                  // Resolve when the cache is updated
+                    resolve();
                 } catch (error) {
                     console.error('Failed to parse Python output:', error);
-                    resolve();  // Still resolve to avoid blocking the UI
+                    resolve();
                 }
               });
             });
