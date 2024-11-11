@@ -56,6 +56,7 @@ function updateDiagnostics(document) {
     if (document.languageId !== 'plaintext') {
         return;
     }
+    console.log('Updating diagnostics');
     const diagnostics = [];
     const text = document.getText();
     // find things like "(identifier /""
@@ -237,7 +238,6 @@ vscode.workspace.onDidChangeConfiguration(event => {
     }
 });
 function activate(context) {
-    console.log('UMR Annotation Helper is now active!');
     const tooltipsPath = path.join(context.extensionPath, 'data', 'tooltips.json');
     try {
         const fileContents = fs.readFileSync(tooltipsPath, 'utf8');
